@@ -2,6 +2,7 @@
 from .ade20k import (ADE20KInstanceDataset, ADE20KPanopticDataset,
                      ADE20KSegDataset)
 from .base_det_dataset import BaseDetDataset
+from .bdd100k_dataset import BDD100KDataset
 from .base_semseg_dataset import BaseSegDataset
 from .base_video_dataset import BaseVideoDataset
 from .cityscapes import CityscapesDataset
@@ -37,6 +38,7 @@ from .youtube_vis_dataset import YouTubeVISDataset
 
 __all__ = [
     'XMLDataset', 'CocoDataset', 'DeepFashionDataset', 'VOCDataset',
+    'BDD100KDataset',
     'CityscapesDataset', 'LVISDataset', 'LVISV05Dataset', 'LVISV1Dataset',
     'WIDERFaceDataset', 'get_loading_pipeline', 'CocoPanopticDataset',
     'MultiImageMixDataset', 'OpenImagesDataset', 'OpenImagesChallengeDataset',

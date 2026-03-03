@@ -108,10 +108,26 @@ pip install "git+https://github.com/JonathonLuiten/TrackEval.git"
 
 ## 7. Install BDD100K Tools
 
+Install from **GitHub** (not PyPI) to get bug fixes for empty-frame handling:
+
 ```bash
-pip install bdd100k
-pip install scalabel
+pip install "git+https://github.com/bdd100k/bdd100k.git"
+# This also installs scalabel from GitHub master as a dependency
 ```
+
+> **Note on BDD100K label format**: BDD100K labels were revised in 2020 from
+> the old 2018 format to the "Scalabel format". The labels downloaded today
+> (`box_track_20`) use the 2020 Scalabel format where label `id` is a string
+> (not int32). The `bdd100k` Python package's `to_coco` command handles this
+> format and produces CocoVID-style JSON compatible with mmdetection's
+> `BaseVideoDataset`.
+>
+> **Why install from GitHub**: The PyPI release (`bdd100k==1.0.1`) has not
+> been updated in over a year and crashes on training frames that lack a
+> `labels` key (`KeyError: 'labels'`, see
+> [bdd100k#209](https://github.com/bdd100k/bdd100k/issues/209),
+> [bdd100k#225](https://github.com/bdd100k/bdd100k/discussions/225)).
+> The GitHub master branch has this fix.
 
 ---
 
@@ -121,7 +137,7 @@ pip install scalabel
 
 Register and download from https://bdd-data.berkeley.edu/:
 - MOT 2020 images (track split)
-- MOT 2020 labels
+- MOT 2020 labels (`box_track_20` — these are in the 2020 Scalabel format)
 
 ### 8b. Organize directory structure
 
@@ -145,11 +161,15 @@ data/bdd100k/
 │       └── test/     # 400 video sequence folders
 └── labels/
     └── box_track_20/
-        ├── train/    # JSON annotation files
-        └── val/      # JSON annotation files
+        ├── train/    # Per-video JSON files in Scalabel format
+        └── val/      # Per-video JSON files in Scalabel format
 ```
 
 ### 8c. Convert BDD100K annotations to COCO format
+
+The `to_coco -m box_track` command converts Scalabel-format labels to
+CocoVID-style JSON with `instance_id` (cross-frame identity), `video_id`
+(linking frames to videos), and standard COCO fields.
 
 ```bash
 python -m bdd100k.label.to_coco \
@@ -165,15 +185,29 @@ python -m bdd100k.label.to_coco \
 
 ### 8d. Verify annotations
 
+Check that the converter output has the required tracking fields:
+
 ```bash
 python -c "
 import json
 with open('data/bdd100k/annotations/box_track_train_cocoformat.json') as f:
     data = json.load(f)
+
+# Verify required tracking fields
+assert any('video_id' in img for img in data['images']), \
+    'Missing video_id on images — converter output incompatible'
+assert any('instance_id' in ann for ann in data['annotations'][:100]), \
+    'Missing instance_id on annotations — tracking will not work'
+
 print(f'Images: {len(data[\"images\"])}')
 print(f'Annotations: {len(data[\"annotations\"])}')
 print(f'Categories: {[c[\"name\"] for c in data[\"categories\"]]}')
 # Expected categories: pedestrian, rider, car, truck, bus, train, motorcycle, bicycle
+
+# Check a sample annotation
+sample = data['annotations'][0]
+print(f'Sample annotation keys: {list(sample.keys())}')
+# Should include: id, image_id, category_id, bbox, area, instance_id, ...
 "
 ```
 

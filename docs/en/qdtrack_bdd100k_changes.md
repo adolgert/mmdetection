@@ -1,8 +1,31 @@
-# QDTrack on BDD100K: Detailed List of Required Changes
+# QDTrack on BDD100K: Detailed List of Changes
 
-This document itemizes every code change, new file, and configuration needed
-to train and evaluate QDTrack on the BDD100K Multi-Object Tracking benchmark
-using this mmdetection v3.3.0 repository.
+This document itemizes every code change, new file, and configuration
+that was added to support training and evaluating QDTrack on the BDD100K
+Multi-Object Tracking benchmark using this mmdetection v3.3.0 repository.
+
+---
+
+## BDD100K Label Format Notes
+
+BDD100K labels were revised in 2020 from the old 2018 format to the
+**Scalabel format**. The tracking labels downloaded today (`box_track_20`)
+use this newer format where:
+
+- Label `id` is a **string** (not int32 as in the old format)
+- Each frame has `frameIndex` and `videoName` fields
+- `box2d` uses `{x1, y1, x2, y2}` coordinates
+
+The `bdd100k` Python package's `to_coco -m box_track` command converts
+Scalabel-format labels to **CocoVID-style** JSON with:
+- `instance_id` on each annotation (cross-frame object identity)
+- `video_id` on each image (linking frames to parent video)
+- Standard COCO fields: `bbox` [x,y,w,h], `area`, `category_id`, `iscrowd`
+
+This output is directly compatible with mmdetection's `BaseVideoDataset`.
+
+**Important**: Install `bdd100k` from GitHub (not PyPI) to avoid bugs with
+empty frames. See the setup guide for details.
 
 ---
 
@@ -28,14 +51,13 @@ and is not covered in these changes (see "Conditional Changes" section at the en
 
 ## Change 1: New BDD100K Dataset Class
 
-### File to create: `mmdet/datasets/bdd100k_dataset.py`
+### File created: `mmdet/datasets/bdd100k_dataset.py`
 
-**Why**: The existing `MOTChallengeDataset` (`mmdet/datasets/mot_challenge_dataset.py`)
-has MOT-specific fields (`visibility`, `mot_conf` at lines 80-81) that don't exist
-in BDD100K annotations. It also has a 13-class `METAINFO` that doesn't match BDD100K.
-
-**Pattern to follow**: `MOTChallengeDataset` is a thin subclass of `BaseVideoDataset`
-(~89 lines). The BDD100K version should be similarly small.
+A thin ~25-line subclass of `BaseVideoDataset` that sets the correct
+`METAINFO` for BDD100K's 8 tracking categories. No `parse_data_info()`
+override is needed because `BaseVideoDataset` already handles the CocoVID
+fields (`instance_id`, `video_id`, `bbox`, `category_id`) produced by
+the `bdd100k.label.to_coco` converter.
 
 **BDD100K MOT categories (8 classes)**:
 1. pedestrian
@@ -47,115 +69,54 @@ in BDD100K annotations. It also has a 13-class `METAINFO` that doesn't match BDD
 7. motorcycle
 8. bicycle
 
-**Key implementation details**:
-- Subclass `BaseVideoDataset` (`mmdet/datasets/base_video_dataset.py`)
-- Define `METAINFO` with the 8 BDD100K categories
-- Override `parse_data_info()` to:
-  - Extract `instance_id` from each annotation (required for tracking)
-  - Extract `bbox` and convert to xyxy format if needed
-  - Extract `category_id` and map to `bbox_label`
-  - Skip the `visibility` and `mot_conf` fields (not in BDD100K)
-  - Handle BDD100K's `iscrowd` / `ignore` flags if present
-- Register with `@DATASETS.register_module()`
-
-**Estimated code**: ~60-80 lines.
+**Why not reuse `MOTChallengeDataset`?** It requires `visibility` and
+`mot_conf` fields (lines 80-81 of `mot_challenge_dataset.py`) that don't
+exist in BDD100K annotations. It also has a 13-class `METAINFO`.
 
 ---
 
 ## Change 2: Register BDD100K Dataset in `__init__.py`
 
-### File to modify: `mmdet/datasets/__init__.py`
+### File modified: `mmdet/datasets/__init__.py`
 
-**Current state** (line 21):
-```python
-from .mot_challenge_dataset import MOTChallengeDataset
-```
-
-**Add** (after line 21):
-```python
-from .bdd100k_dataset import BDD100KDataset
-```
-
-**Also add** `'BDD100KDataset'` to the `__all__` list (line 46).
+Added `from .bdd100k_dataset import BDD100KDataset` import and added
+`'BDD100KDataset'` to the `__all__` list.
 
 ---
 
 ## Change 3: Fix Multi-Class Label Handling in QDTrack Model
 
-### File to modify: `mmdet/models/mot/qdtrack.py`
+### File modified: `mmdet/models/mot/qdtrack.py`
 
-**Problem** (lines 137-139):
-```python
-key_data_sample = track_data_sample.get_key_frames()[0]
-key_data_sample.gt_instances.labels = \
-    torch.zeros_like(key_data_sample.gt_instances.labels)
-key_data_samples.append(key_data_sample)
-```
+**Problem**: The `loss()` method zeroed out ALL ground truth class labels
+before passing them to both the RPN and the roi_head. For MOT17 (1 class)
+this was harmless, but for BDD100K (8 classes) it destroyed all class
+information.
 
-This zeros out ALL ground truth class labels. The comment on line 133 says
-"set cat_id of gt_labels to 0 in RPN", but the zeroed `key_data_samples` are
-also passed to `roi_head.loss()` on line 176-177:
+**Fix**: Save original labels before zeroing for the RPN, then restore
+them before the roi_head forward pass.
 
-```python
-losses_detect = self.detector.roi_head.loss(x, rpn_results_list,
-                                            key_data_samples, **kwargs)
-```
+The key changes:
 
-For MOT17 (1 class), this is harmless — all objects are class 0 anyway.
-For BDD100K (8 classes), this destroys all class information, making the
-detector treat every object as class 0.
-
-**Fix** (replace lines 137-140):
-```python
-key_data_sample = track_data_sample.get_key_frames()[0]
-# Save original labels for roi_head (multi-class detection)
-original_labels = key_data_sample.gt_instances.labels.clone()
-# Zero labels for RPN (class-agnostic proposal generation)
-key_data_sample.gt_instances.labels = \
-    torch.zeros_like(key_data_sample.gt_instances.labels)
-key_data_samples.append(key_data_sample)
-```
-
-Then, between the RPN forward pass (line 166) and the roi_head loss (line 176),
-restore the original labels:
+1. Added `saved_labels = []` list before the data sample loop
+2. In the loop, save original labels with `.clone()` before zeroing
+3. After the RPN forward pass, restore original labels before roi_head:
 
 ```python
-# Restore original class labels for roi_head
-for key_data_sample, track_data_sample in zip(key_data_samples, data_samples):
-    original_key = track_data_sample.get_key_frames()[0]
-    key_data_sample.gt_instances.labels = original_key.gt_instances.labels
-```
-
-**Alternative approach**: Since the save/restore approach above creates
-coupling with `get_key_frames()` being called twice, a cleaner approach is
-to save the labels in a list before the loop:
-
-```python
-saved_labels = []
-for track_data_sample in data_samples:
-    ...
-    key_data_sample = track_data_sample.get_key_frames()[0]
-    saved_labels.append(key_data_sample.gt_instances.labels.clone())
-    key_data_sample.gt_instances.labels = \
-        torch.zeros_like(key_data_sample.gt_instances.labels)
-    key_data_samples.append(key_data_sample)
-    ...
-
-# After RPN forward, before roi_head:
 for kds, orig_labels in zip(key_data_samples, saved_labels):
     kds.gt_instances.labels = orig_labels
 ```
 
-**Backward compatibility**: This change is safe for MOT17 too — saving and
+**Backward compatibility**: This change is safe for MOT17 — saving and
 restoring all-zero labels is a no-op.
 
 ---
 
 ## Change 4: BDD100K Base Dataset Config
 
-### File to create: `configs/_base_/datasets/bdd100k_track.py`
+### File created: `configs/_base_/datasets/bdd100k_track.py`
 
-**Pattern to follow**: `configs/_base_/datasets/mot_challenge.py` (91 lines).
+Follows the pattern of `configs/_base_/datasets/mot_challenge.py`.
 
 **Key differences from MOT Challenge config**:
 
@@ -165,125 +126,53 @@ restoring all-zero labels is a no-op.
 | `data_root` | `'data/MOT17/'` | `'data/bdd100k/'` |
 | `ann_file` (train) | `'annotations/half-train_cocoformat.json'` | `'annotations/box_track_train_cocoformat.json'` |
 | `ann_file` (val) | `'annotations/half-val_cocoformat.json'` | `'annotations/box_track_val_cocoformat.json'` |
-| `data_prefix` | `dict(img_path='train')` | `dict(img_path='images/track/train')` |
+| `data_prefix` (train) | `dict(img_path='train')` | `dict(img_path='images/track/train')` |
+| `data_prefix` (val) | `dict(img_path='train')` | `dict(img_path='images/track/val')` |
 | `metainfo.classes` | `('pedestrian',)` | All 8 BDD100K classes |
-| `visibility_thr` | `-1` | N/A (not applicable to BDD100K) |
-| `img_scale` | `(1088, 1088)` | `(1280, 720)` — BDD100K native resolution |
+| `visibility_thr` | `-1` | N/A (not used) |
+| `img_scale` | `(1088, 1088)` | `(1280, 736)` |
 
-**Note on image scale**: BDD100K images are 1280x720 (dashboard camera).
-The training pipeline can resize/crop these, but the base scale should
-reflect the native resolution. Consider `(1296, 736)` for divisibility by 32.
+**Note on image scale**: BDD100K native resolution is 1280x720. We use
+1280x736 for divisibility by 32 (required by FPN stride).
 
 ---
 
 ## Change 5: BDD100K QDTrack Training Config
 
-### File to create: `configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py`
+### File created: `configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py`
 
-**Pattern to follow**: `configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_mot17halftrain_test-mot17halfval.py`
+Inherits from the base QDTrack config and the BDD100K dataset config.
 
-**Key differences from MOT17 config**:
+**Key overrides**:
 
-1. **Base configs**: Inherit from `bdd100k_track.py` instead of `mot_challenge.py`
+1. **`num_classes=8`** in `detector.roi_head.bbox_head` (overrides the
+   base config's `num_classes=1`)
 
-2. **Detector num_classes**: Change from `1` to `8`
-   - In `configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_4e_base.py` line 18:
-     ```python
-     detector.roi_head.bbox_head.update(dict(num_classes=1))
-     ```
-   - Override in the BDD100K config:
-     ```python
-     model = dict(
-         detector=dict(
-             roi_head=dict(
-                 bbox_head=dict(num_classes=8))))
-     ```
+2. **Full COCO-pretrained Faster R-CNN** instead of person-only model
+   (`faster_rcnn_r50_fpn_1x_coco` instead of `faster_rcnn_r50_fpn_1x_coco-person`)
 
-3. **Pretrained weights**: The MOT17 config uses a COCO-person-only pretrained
-   Faster R-CNN (`faster_rcnn_r50_fpn_1x_coco-person`). For BDD100K with
-   8 diverse categories, use the standard COCO-pretrained model instead:
-   ```python
-   model = dict(
-       detector=dict(
-           init_cfg=dict(
-               type='Pretrained',
-               checkpoint='https://download.openmmlab.com/mmdetection/v2.0/'
-               'faster_rcnn/faster_rcnn_r50_fpn_1x_coco/'
-               'faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth')))
-   ```
-
-4. **Evaluator**: Use `CocoVideoMetric` with `classwise=True` for per-class AP,
-   plus `MOTChallengeMetric` for tracking metrics. Or use BDD100K-specific
-   evaluation (see Change 7).
-
-5. **Training schedule**: May increase epochs from 4 to 8-12 since BDD100K
-   is larger (1400 train videos vs MOT17's 7 sequences). Adjust learning
-   rate schedule accordingly:
-   ```python
-   param_scheduler = [
-       dict(type='MultiStepLR', begin=0, end=8, by_epoch=True, milestones=[6])
-   ]
-   train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=8, val_interval=4)
-   ```
+3. **Evaluator**: `CocoVideoMetric` with `classwise=True` for per-class
+   detection AP, plus `MOTChallengeMetric` for tracking metrics (HOTA,
+   CLEAR, Identity)
 
 ---
 
-## Change 6: BDD100K Annotation Converter (Optional)
+## Summary: All Changes
 
-### File to create: `tools/dataset_converters/bdd100k2coco.py`
+| # | Type | File | Status |
+|---|------|------|--------|
+| 1 | **New** | `mmdet/datasets/bdd100k_dataset.py` | Done |
+| 2 | **Edit** | `mmdet/datasets/__init__.py` | Done |
+| 3 | **Edit** | `mmdet/models/mot/qdtrack.py` | Done |
+| 4 | **New** | `configs/_base_/datasets/bdd100k_track.py` | Done |
+| 5 | **New** | `configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py` | Done |
 
-**Why**: The `bdd100k` pip package provides `bdd100k.label.to_coco` for
-conversion. However, the output may need post-processing to match what
-`BaseVideoDataset` expects (specifically `instance_id`, `video_id`, and
-`frame_id` fields in the COCO JSON).
+### Not implemented (optional, for future work)
 
-**If the bdd100k converter output is compatible**: No converter needed. Just
-verify the JSON structure.
-
-**If not compatible**: Write a script that:
-1. Reads BDD100K Scalabel JSON
-2. Outputs COCO-format JSON with `images[].video_id`, `images[].frame_id`,
-   `annotations[].instance_id`, and `videos[]` list
-3. Maps BDD100K category names to integer IDs (0-7)
-
-**Estimated code**: 50-100 lines if needed.
-
----
-
-## Change 7: BDD100K Evaluation Metric (Optional)
-
-### File to create: `mmdet/evaluation/metrics/bdd100k_mot_metric.py`
-
-**Why**: BDD100K has its own evaluation protocol that computes multi-class
-MOTA, MOTP, and IDF1 differently from MOTChallenge.
-
-**Options** (in order of effort):
-1. **Lowest effort**: Use existing `MOTChallengeMetric` — gives approximate
-   results but won't match BDD100K leaderboard exactly
-2. **Medium effort**: Post-hoc evaluation — save results to BDD100K format
-   and use `bdd100k` CLI tools to evaluate
-3. **Highest effort**: Write a custom `BDD100KMOTMetric` that calls the
-   `bdd100k.evaluation` API inside the mmdet evaluation loop
-
-**Recommendation**: Start with option 1 for development/debugging, then
-use option 2 for final numbers.
-
----
-
-## Summary: All Changes at a Glance
-
-| # | Type | File | Lines Changed | Effort |
-|---|------|------|---------------|--------|
-| 1 | **New** | `mmdet/datasets/bdd100k_dataset.py` | ~70 new | 2-4 hours |
-| 2 | **Edit** | `mmdet/datasets/__init__.py` | 2 lines | 5 minutes |
-| 3 | **Edit** | `mmdet/models/mot/qdtrack.py` | ~10 lines | 1 hour |
-| 4 | **New** | `configs/_base_/datasets/bdd100k_track.py` | ~90 new | 1-2 hours |
-| 5 | **New** | `configs/qdtrack/qdtrack_..._bdd100k.py` | ~30 new | 1-2 hours |
-| 6 | **New** (optional) | `tools/dataset_converters/bdd100k2coco.py` | ~80 new | 1-2 hours |
-| 7 | **New** (optional) | `mmdet/evaluation/metrics/bdd100k_mot_metric.py` | ~150 new | 2-4 hours |
-
-**Total code changes**: ~5 files modified/created (required), +2 optional.
-**Core engineering effort**: ~1-2 days for required changes + testing.
+| # | Type | File | Purpose |
+|---|------|------|---------|
+| 6 | New | `mmdet/evaluation/metrics/bdd100k_mot_metric.py` | Official BDD100K evaluation (for leaderboard submission) |
+| 7 | New | `tools/dataset_converters/bdd100k2coco.py` | Not needed — `bdd100k.label.to_coco` handles conversion |
 
 ---
 
