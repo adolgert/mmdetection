@@ -157,6 +157,51 @@ Inherits from the base QDTrack config and the BDD100K dataset config.
 
 ---
 
+## Change 6: Data Validation Script
+
+### File created: `tools/analysis_tools/mot/validate_bdd100k_data.py`
+
+A standalone script that checks BDD100K data correctness at five layers,
+reporting actionable error messages at each stage:
+
+1. **File existence** — checks data_root, annotation file, and image directory
+2. **JSON structure** — validates required fields (`video_id`, `frame_id`,
+   `instance_id`, `bbox`, `category_id`), ID uniqueness, referential integrity
+3. **Category consistency** — compares JSON categories against config METAINFO
+4. **Image accessibility** (optional `--check-images`) — file existence,
+   decodability, annotation/actual size match
+5. **Pipeline smoke test** — instantiates `BDD100KDataset` with `pipeline=[]`,
+   then with the full pipeline, checking data structure at each stage
+
+Usage:
+```bash
+python tools/analysis_tools/mot/validate_bdd100k_data.py \
+    configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py \
+    [--split train|val] [--check-images] [--max-samples 10]
+```
+
+---
+
+## Change 7: BDD100K Unit Test and Sample Data
+
+### File created: `tests/data/bdd100k_sample.json`
+
+Minimal mock annotation file (2 videos, 5 frames, 11 annotations) with 4
+of the 8 BDD100K categories (pedestrian, car, bus, motorcycle). Follows the
+same structure as `tests/data/mot_sample.json` but adapted for BDD100K.
+
+### File created: `tests/test_datasets/test_bdd100k_dataset.py`
+
+Unit test with 4 test methods following the `test_mot_challenge_dataset.py`
+pattern:
+
+- `test_bdd100k_dataset` — loads all 8 classes, checks video/image counts
+- `test_bdd100k_dataset_categories` — loads subset of classes (car, bus)
+- `test_bdd100k_instance_ids` — verifies instance_id, bbox, bbox_label
+- `test_bdd100k_multiclass_labels` — verifies multiple class labels exist
+
+---
+
 ## Summary: All Changes
 
 | # | Type | File | Status |
@@ -166,13 +211,16 @@ Inherits from the base QDTrack config and the BDD100K dataset config.
 | 3 | **Edit** | `mmdet/models/mot/qdtrack.py` | Done |
 | 4 | **New** | `configs/_base_/datasets/bdd100k_track.py` | Done |
 | 5 | **New** | `configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py` | Done |
+| 6 | **New** | `tools/analysis_tools/mot/validate_bdd100k_data.py` | Done |
+| 7 | **New** | `tests/data/bdd100k_sample.json` | Done |
+| 8 | **New** | `tests/test_datasets/test_bdd100k_dataset.py` | Done |
 
 ### Not implemented (optional, for future work)
 
 | # | Type | File | Purpose |
 |---|------|------|---------|
-| 6 | New | `mmdet/evaluation/metrics/bdd100k_mot_metric.py` | Official BDD100K evaluation (for leaderboard submission) |
-| 7 | New | `tools/dataset_converters/bdd100k2coco.py` | Not needed — `bdd100k.label.to_coco` handles conversion |
+| 9 | New | `mmdet/evaluation/metrics/bdd100k_mot_metric.py` | Official BDD100K evaluation (for leaderboard submission) |
+| 10 | New | `tools/dataset_converters/bdd100k2coco.py` | Not needed — `bdd100k.label.to_coco` handles conversion |
 
 ---
 

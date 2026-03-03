@@ -297,7 +297,43 @@ prof.export_chrome_trace("trace.json")
 
 ---
 
-## 11. Full Verification Checklist
+## 11. Validating Data Before Training
+
+Before training, run the validation script to check that data files,
+annotation structure, and the dataset class all work correctly:
+
+```bash
+# Basic validation (checks files, JSON structure, categories, pipeline)
+python tools/analysis_tools/mot/validate_bdd100k_data.py \
+    configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py
+
+# Also check a sample of images can be read
+python tools/analysis_tools/mot/validate_bdd100k_data.py \
+    configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py \
+    --check-images --max-samples 20
+
+# Validate the val split instead of train
+python tools/analysis_tools/mot/validate_bdd100k_data.py \
+    configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py \
+    --split val
+```
+
+The script checks five layers and reports actionable error messages:
+1. **File existence** — data_root, annotation file, image directory
+2. **JSON structure** — required fields, ID uniqueness, referential integrity
+3. **Category consistency** — JSON categories vs config METAINFO
+4. **Image accessibility** (optional) — file existence, decodability, size match
+5. **Pipeline smoke test** — dataset class instantiation, data structure
+
+You can also run the BDD100K dataset unit test to verify the dataset class:
+
+```bash
+python -m pytest tests/test_datasets/test_bdd100k_dataset.py -v
+```
+
+---
+
+## 12. Full Verification Checklist
 
 ```bash
 # 1. Environment
@@ -306,10 +342,18 @@ python -c "import mmdet; print(mmdet.__version__); import torch; print(torch.cud
 # 2. CUDA ops
 python -c "from mmcv.ops import nms, roi_align; print('OK')"
 
-# 3. Existing QDTrack tests still pass
+# 3. BDD100K dataset unit test
+python -m pytest tests/test_datasets/test_bdd100k_dataset.py -v
+
+# 4. Existing QDTrack tests still pass
 python -m pytest tests/test_models/test_mot/test_qdtrack.py -v
 
-# 4. Training sanity check (1 epoch)
+# 5. Data validation (after downloading and converting data)
+python tools/analysis_tools/mot/validate_bdd100k_data.py \
+    configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py \
+    --check-images
+
+# 6. Training sanity check (1 epoch)
 python tools/train.py \
     configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py \
     --cfg-options train_cfg.max_epochs=1
