@@ -358,3 +358,130 @@ python tools/train.py \
     configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py \
     --cfg-options train_cfg.max_epochs=1
 ```
+
+---
+
+## 13. Docker
+
+A multi-stage Dockerfile is provided at `qdtrack.docker` in the repository
+root. It uses `nvidia/cuda:12.1.0-devel-ubuntu22.04` to compile mmcv CUDA
+extensions, then copies the result into a smaller
+`nvidia/cuda:12.1.0-runtime-ubuntu22.04` image (~1.5 GB smaller than keeping
+the compiler toolchain).
+
+### 13a. Prerequisites
+
+- Docker with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed
+- NVIDIA driver >= 525 (for CUDA 12.1 runtime support)
+
+### 13b. Create a `.dockerignore`
+
+Before building, create a `.dockerignore` next to `qdtrack.docker` to exclude
+large directories from the build context:
+
+```
+.git
+data/
+work_dirs/
+__pycache__/
+*.pyc
+*.egg-info
+```
+
+Without this, `COPY . /opt/mmdetection` sends the `.git` history and any
+local datasets into the build, inflating the context by gigabytes.
+
+### 13c. Build the image
+
+```bash
+docker build -f qdtrack.docker -t qdtrack:latest .
+```
+
+### 13d. Mount the BDD100K dataset at runtime
+
+Use **bind mounts** (`-v`), not Docker named volumes, for the dataset.
+
+On Linux, bind mounts and Docker volumes have identical I/O performance —
+both are directories on the host filesystem with no virtualization layer.
+(Docker volumes are faster only on macOS/Windows Docker Desktop, where bind
+mounts cross the VM boundary via VirtioFS.) Bind mounts are preferred because:
+
+- **No data duplication.** The 7–10 GB dataset stays in place on the host.
+  Docker named volumes live under `/var/lib/docker/volumes/`, which is
+  typically on the root partition — copying a large dataset there risks
+  filling it.
+- **Easier to manage.** You can browse, update, and share the data across
+  containers without `docker cp` or `docker volume` commands.
+
+Mount the dataset **read-only** (`:ro`) since training only reads images.
+Mount `work_dirs` **read-write** for checkpoints, logs, and saved models.
+
+Expected dataset layout on the host (before mounting):
+
+```
+/path/to/bdd100k/
+├── images/track/{train,val,test}/     # video-sequence directories
+├── labels/box_track_20/{train,val}/   # Scalabel JSON label files
+└── annotations/                       # created by to_coco conversion
+    ├── box_track_train_cocoformat.json
+    └── box_track_val_cocoformat.json
+```
+
+### 13e. Run: convert BDD100K labels (one-time)
+
+If you haven't already converted the labels on the host (section 8c), you
+can run the conversion inside the container. Omit `:ro` on this run since
+the conversion writes to the `annotations/` directory:
+
+```bash
+docker run --gpus all \
+    -v /path/to/bdd100k:/opt/mmdetection/data/bdd100k \
+    qdtrack:latest \
+    bash -c '
+        python -m bdd100k.label.to_coco -m box_track \
+            -i data/bdd100k/labels/box_track_20/train/ \
+            -o data/bdd100k/annotations/box_track_train_cocoformat.json && \
+        python -m bdd100k.label.to_coco -m box_track \
+            -i data/bdd100k/labels/box_track_20/val/ \
+            -o data/bdd100k/annotations/box_track_val_cocoformat.json'
+```
+
+### 13f. Run: single-GPU training
+
+```bash
+docker run --gpus all --shm-size=8g \
+    -v /path/to/bdd100k:/opt/mmdetection/data/bdd100k:ro \
+    -v /path/to/work_dirs:/opt/mmdetection/work_dirs \
+    qdtrack:latest \
+    python tools/train.py \
+        configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py
+```
+
+### 13g. Run: multi-GPU training
+
+```bash
+docker run --gpus all --shm-size=8g \
+    -v /path/to/bdd100k:/opt/mmdetection/data/bdd100k:ro \
+    -v /path/to/work_dirs:/opt/mmdetection/work_dirs \
+    qdtrack:latest \
+    bash tools/dist_train.sh \
+        configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py 8
+```
+
+### 13h. Run: data validation
+
+```bash
+docker run --gpus all \
+    -v /path/to/bdd100k:/opt/mmdetection/data/bdd100k:ro \
+    qdtrack:latest \
+    python tools/analysis_tools/mot/validate_bdd100k_data.py \
+        configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py \
+        --check-images
+```
+
+### 13i. Note on `--shm-size`
+
+`--shm-size=8g` is required. PyTorch DataLoader workers communicate through
+`/dev/shm` (shared memory), and Docker's default of 64 MB causes "bus error"
+crashes. 8 GB is generous enough for 2–4 workers per GPU. An alternative is
+`--ipc=host`, which shares the host's `/dev/shm` directly.
