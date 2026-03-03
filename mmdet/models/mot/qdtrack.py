@@ -130,11 +130,16 @@ class QDTrack(BaseMOTModel):
         # frames
         ref_data_samples, key_data_samples = [], []
         key_frame_inds, ref_frame_inds = [], []
-        # set cat_id of gt_labels to 0 in RPN
+        # Save original labels so they can be restored for the roi_head,
+        # which needs real class labels for multi-class detection (e.g.
+        # BDD100K with 8 categories). The RPN is class-agnostic and only
+        # needs binary foreground/background labels.
+        saved_labels = []
         for track_data_sample in data_samples:
             key_frame_inds.append(track_data_sample.key_frames_inds[0])
             ref_frame_inds.append(track_data_sample.ref_frames_inds[0])
             key_data_sample = track_data_sample.get_key_frames()[0]
+            saved_labels.append(key_data_sample.gt_instances.labels.clone())
             key_data_sample.gt_instances.labels = \
                 torch.zeros_like(key_data_sample.gt_instances.labels)
             key_data_samples.append(key_data_sample)
@@ -171,6 +176,12 @@ class QDTrack(BaseMOTModel):
             if 'loss' in key and 'rpn' not in key:
                 rpn_losses[f'rpn_{key}'] = rpn_losses.pop(key)
         losses.update(rpn_losses)
+
+        # Restore original class labels for the roi_head. This is a no-op
+        # for single-class datasets (e.g. MOT17) where all labels are 0,
+        # but is required for multi-class datasets (e.g. BDD100K).
+        for kds, orig_labels in zip(key_data_samples, saved_labels):
+            kds.gt_instances.labels = orig_labels
 
         # roi_head loss
         losses_detect = self.detector.roi_head.loss(x, rpn_results_list,

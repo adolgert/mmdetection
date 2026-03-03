@@ -1,0 +1,36 @@
+{
+    "categories": [
+        {"id": 1, "name": "pedestrian"},
+        {"id": 2, "name": "rider"},
+        {"id": 3, "name": "car"},
+        {"id": 4, "name": "truck"},
+        {"id": 5, "name": "bus"},
+        {"id": 6, "name": "train"},
+        {"id": 7, "name": "motorcycle"},
+        {"id": 8, "name": "bicycle"}
+    ],
+    "videos": [
+        {"id": 1, "name": "b1c66a42-6f7d68ca", "fps": 5, "width": 1280, "height": 720},
+        {"id": 2, "name": "b1c81faa-3df17267", "fps": 5, "width": 1280, "height": 720}
+    ],
+    "images": [
+        {"id": 1, "video_id": 1, "file_name": "b1c66a42-6f7d68ca/b1c66a42-6f7d68ca-0000001.jpg", "height": 720, "width": 1280, "frame_id": 0},
+        {"id": 2, "video_id": 1, "file_name": "b1c66a42-6f7d68ca/b1c66a42-6f7d68ca-0000002.jpg", "height": 720, "width": 1280, "frame_id": 1},
+        {"id": 3, "video_id": 1, "file_name": "b1c66a42-6f7d68ca/b1c66a42-6f7d68ca-0000003.jpg", "height": 720, "width": 1280, "frame_id": 2},
+        {"id": 4, "video_id": 2, "file_name": "b1c81faa-3df17267/b1c81faa-3df17267-0000001.jpg", "height": 720, "width": 1280, "frame_id": 0},
+        {"id": 5, "video_id": 2, "file_name": "b1c81faa-3df17267/b1c81faa-3df17267-0000002.jpg", "height": 720, "width": 1280, "frame_id": 1}
+    ],
+    "annotations": [
+        {"id": 1, "image_id": 1, "category_id": 3, "bbox": [400.0, 200.0, 120.0, 80.0], "area": 9600.0, "iscrowd": false, "instance_id": 0},
+        {"id": 2, "image_id": 1, "category_id": 1, "bbox": [600.0, 350.0, 40.0, 100.0], "area": 4000.0, "iscrowd": false, "instance_id": 1},
+        {"id": 3, "image_id": 2, "category_id": 3, "bbox": [420.0, 198.0, 118.0, 82.0], "area": 9676.0, "iscrowd": false, "instance_id": 0},
+        {"id": 4, "image_id": 2, "category_id": 1, "bbox": [610.0, 348.0, 42.0, 102.0], "area": 4284.0, "iscrowd": false, "instance_id": 1},
+        {"id": 5, "image_id": 3, "category_id": 3, "bbox": [440.0, 196.0, 116.0, 84.0], "area": 9744.0, "iscrowd": false, "instance_id": 0},
+        {"id": 6, "image_id": 3, "category_id": 1, "bbox": [620.0, 346.0, 44.0, 104.0], "area": 4576.0, "iscrowd": false, "instance_id": 1},
+        {"id": 7, "image_id": 3, "category_id": 7, "bbox": [800.0, 400.0, 60.0, 50.0], "area": 3000.0, "iscrowd": false, "instance_id": 2},
+        {"id": 8, "image_id": 4, "category_id": 5, "bbox": [200.0, 300.0, 200.0, 150.0], "area": 30000.0, "iscrowd": false, "instance_id": 3},
+        {"id": 9, "image_id": 4, "category_id": 1, "bbox": [700.0, 400.0, 35.0, 90.0], "area": 3150.0, "iscrowd": false, "instance_id": 4},
+        {"id": 10, "image_id": 5, "category_id": 5, "bbox": [210.0, 298.0, 198.0, 152.0], "area": 30096.0, "iscrowd": false, "instance_id": 3},
+        {"id": 11, "image_id": 5, "category_id": 1, "bbox": [710.0, 398.0, 37.0, 92.0], "area": 3404.0, "iscrowd": false, "instance_id": 4}
+    ]
+}
