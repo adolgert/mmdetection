@@ -1,0 +1,157 @@
+# qdtrack.docker — Multi-stage Dockerfile for QDTrack on BDD100K
+#
+# Build:
+#   docker build -f qdtrack.docker -t qdtrack:latest .
+#
+# Run (single-GPU training with BDD100K):
+#   docker run --gpus all --shm-size=8g \
+#       -v /path/to/bdd100k:/opt/mmdetection/data/bdd100k:ro \
+#       -v /path/to/work_dirs:/opt/mmdetection/work_dirs \
+#       qdtrack:latest \
+#       python tools/train.py \
+#           configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py
+#
+# Run (multi-GPU training):
+#   docker run --gpus all --shm-size=8g \
+#       -v /path/to/bdd100k:/opt/mmdetection/data/bdd100k:ro \
+#       -v /path/to/work_dirs:/opt/mmdetection/work_dirs \
+#       qdtrack:latest \
+#       bash tools/dist_train.sh \
+#           configs/qdtrack/qdtrack_faster-rcnn_r50_fpn_8xb2-4e_bdd100k.py 8
+#
+# Convert BDD100K labels (one-time, inside the container):
+#   docker run --gpus all \
+#       -v /path/to/bdd100k:/opt/mmdetection/data/bdd100k \
+#       qdtrack:latest \
+#       bash -c '
+#           python -m bdd100k.label.to_coco -m box_track \
+#               -i data/bdd100k/labels/box_track_20/train/ \
+#               -o data/bdd100k/annotations/box_track_train_cocoformat.json && \
+#           python -m bdd100k.label.to_coco -m box_track \
+#               -i data/bdd100k/labels/box_track_20/val/ \
+#               -o data/bdd100k/annotations/box_track_val_cocoformat.json'
+#
+# ---- Data mounting strategy ------------------------------------------------
+#
+# Use bind mounts (-v), not Docker named volumes, for the BDD100K dataset.
+#
+# On Linux, bind mounts and Docker volumes have identical I/O performance —
+# both are simple directories on the host filesystem with no virtualization
+# layer. (Docker volumes are faster than bind mounts only on macOS/Windows
+# Docker Desktop, where bind mounts must cross the VM boundary via VirtioFS.)
+#
+# Bind mounts are preferred here because:
+#   - No data duplication. The 7-10 GB dataset stays where it is on the host.
+#   - Docker volumes live under /var/lib/docker/volumes/, which is typically
+#     on the root partition. Copying a large dataset there can fill it up.
+#   - The data is easier to manage (browse, update, share across containers)
+#     when it stays on the host filesystem.
+#
+# Mount the dataset read-only (:ro) since training only reads images.
+# Mount work_dirs read-write for checkpoints, logs, and saved models.
+#
+# --shm-size=8g is required because PyTorch DataLoader workers communicate
+# through /dev/shm (shared memory), and Docker's default of 64 MB causes
+# "bus error" crashes. 8 GB is generous enough for 2-4 workers per GPU.
+# An alternative is --ipc=host, which shares the host's /dev/shm directly.
+#
+# Expected dataset layout on the host (before mounting):
+#   /path/to/bdd100k/
+#   ├── images/track/{train,val,test}/     # video-sequence directories
+#   ├── labels/box_track_20/{train,val}/   # Scalabel JSON label files
+#   └── annotations/                       # created by to_coco conversion
+#       ├── box_track_train_cocoformat.json
+#       └── box_track_val_cocoformat.json
+#
+# ---- .dockerignore ---------------------------------------------------------
+#
+# Create a .dockerignore alongside this file to keep the build context small:
+#   .git
+#   data/
+#   work_dirs/
+#   __pycache__/
+#   *.pyc
+#   *.egg-info
+#
+# Without it, COPY . /opt/mmdetection sends the entire .git history and any
+# local datasets into the build context.
+#
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder — compile mmcv CUDA extensions, install all packages
+# ---------------------------------------------------------------------------
+FROM nvidia/cuda:12.1.0-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 python3.10-dev python3.10-venv python3-pip \
+        git ninja-build build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install everything into a venv so it can be copied cleanly to stage 2.
+RUN python3.10 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# PyTorch 2.1.2 with CUDA 12.1 (the wheel bundles cuDNN and NCCL).
+RUN pip install --no-cache-dir \
+    torch==2.1.2 torchvision==0.16.2 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# CUDA architectures to compile for:
+#   7.0=V100  7.5=T4/RTX2080  8.0=A100  8.6=RTX3090/A40
+#   8.9=RTX4090/L40/Ada  9.0=H100  +PTX=future arch forward-compat
+ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0+PTX" \
+    FORCE_CUDA="1"
+
+# mmcv 2.1.0 — downloads a pre-built wheel if one exists for this
+# PyTorch/CUDA/Python triple, otherwise compiles from source.
+RUN pip install --no-cache-dir openmim && \
+    mim install mmcv==2.1.0
+
+RUN pip install --no-cache-dir mmengine==0.10.4
+
+# Copy mmdetection source and install in editable mode so configs and
+# tools/ scripts are usable from the source tree.
+COPY . /opt/mmdetection
+RUN pip install --no-cache-dir -e /opt/mmdetection
+
+# Tracking and BDD100K dependencies.
+# bdd100k is installed from GitHub (not PyPI) — see docs/en/qdtrack_bdd100k_setup.md.
+RUN pip install --no-cache-dir \
+    motmetrics mmpretrain "numpy<1.24.0" scikit-learn seaborn \
+    "git+https://github.com/JonathonLuiten/TrackEval.git" \
+    "git+https://github.com/bdd100k/bdd100k.git"
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime — no compiler, no CUDA headers (~1.5 GB smaller)
+# ---------------------------------------------------------------------------
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 \
+        ffmpeg libsm6 libxext6 libglib2.0-0 libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the entire Python environment and mmdetection source from builder.
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/mmdetection /opt/mmdetection
+
+ENV PATH="/opt/venv/bin:$PATH"
+
+# nvidia-container-toolkit reads these to configure GPU access.
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+WORKDIR /opt/mmdetection
+
+# Smoke-test the installation (no GPU needed at build time).
+RUN python -c "\
+import mmdet; print(f'mmdet {mmdet.__version__}'); \
+import mmcv;  print(f'mmcv  {mmcv.__version__}'); \
+import torch; print(f'torch {torch.__version__}')"
