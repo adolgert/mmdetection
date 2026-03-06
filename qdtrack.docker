@@ -116,7 +116,7 @@ RUN pip install --no-cache-dir mmengine==0.10.4
 # Copy mmdetection source and install in editable mode so configs and
 # tools/ scripts are usable from the source tree.
 COPY . /opt/mmdetection
-RUN pip install --no-cache-dir -e /opt/mmdetection
+RUN pip install --no-cache-dir --no-build-isolation -e /opt/mmdetection
 
 # Tracking and BDD100K dependencies.
 # bdd100k is installed from GitHub (not PyPI) — see docs/en/qdtrack_bdd100k_setup.md.
