@@ -113,6 +113,11 @@ RUN pip install --no-cache-dir openmim && \
 
 RUN pip install --no-cache-dir mmengine==0.10.4
 
+# Pin numpy <2 now — PyTorch 2.1.2 was compiled against NumPy 1.x and
+# crashes under NumPy 2.x.  Also install wheel (needed by setup.py's
+# bdist_wheel command).  The tracking step below tightens this to <1.24.0.
+RUN pip install --no-cache-dir "numpy<2" wheel
+
 # Copy mmdetection source and install in editable mode so configs and
 # tools/ scripts are usable from the source tree.
 COPY . /opt/mmdetection
