@@ -453,9 +453,12 @@ def validate_layer5_pipeline(cfg, split):
         return False
 
     # Step 5b: Check data structure of first video
+    # Use get_data_info() to inspect the raw video structure.
+    # dataset[0] goes through prepare_data() which, in test_mode,
+    # flattens the video into frame-level dicts without an 'images' key.
     print('  5b. Checking data structure of first video...')
     try:
-        video_0 = dataset[0]
+        video_0 = dataset.get_data_info(0)
         if 'images' not in video_0:
             errors.append(
                 'First video entry has no "images" key.\n'
