@@ -34,7 +34,8 @@ train_pipeline = [
             dict(
                 type='RandomCrop',
                 crop_size=img_scale,
-                bbox_clip_border=False)
+                bbox_clip_border=False,
+                allow_negative_crop=True)
         ]),
     dict(
         type='TransformBroadcaster',
