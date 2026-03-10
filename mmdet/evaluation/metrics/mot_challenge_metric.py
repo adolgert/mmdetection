@@ -167,9 +167,9 @@ class MOTChallengeMetric(BaseVideoMetric):
                     gt_instances[i]['bbox'][0], gt_instances[i]['bbox'][1],
                     gt_instances[i]['bbox'][2] - gt_instances[i]['bbox'][0],
                     gt_instances[i]['bbox'][3] - gt_instances[i]['bbox'][1],
-                    gt_instances[i]['mot_conf'],
+                    gt_instances[i].get('mot_conf', 1.0),
                     gt_instances[i]['category_id'],
-                    gt_instances[i]['visibility']
+                    gt_instances[i].get('visibility', 1.0)
                 ]) for i in range(len(gt_instances))
             ]
             self.seq_info[video]['gt_tracks'].extend(gt_tracks)
