@@ -168,7 +168,7 @@ class MOTChallengeMetric(BaseVideoMetric):
                     gt_instances[i]['bbox'][2] - gt_instances[i]['bbox'][0],
                     gt_instances[i]['bbox'][3] - gt_instances[i]['bbox'][1],
                     gt_instances[i].get('mot_conf', 1.0),
-                    gt_instances[i]['category_id'],
+                    gt_instances[i].get('category_id', 1),
                     gt_instances[i].get('visibility', 1.0)
                 ]) for i in range(len(gt_instances))
             ]
