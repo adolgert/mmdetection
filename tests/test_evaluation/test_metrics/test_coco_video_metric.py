@@ -411,3 +411,94 @@ class TestCocoVideoMetric(TestCase):
             osp.isfile(osp.join(self.tmp_dir.name, 'test.segm.json')))
         self.assertTrue(
             osp.isfile(osp.join(self.tmp_dir.name, 'test.gt.json')))
+
+    def test_evaluate_bdd100k_multiclass(self):
+        """Test CocoVideoMetric with BDD100K-style 8-class tracking data.
+
+        Simulates the exact data flow during BDD100K QDTrack validation:
+        - ann_file=None (GT comes from instances metainfo, not JSON file)
+        - 8 classes with classwise=True
+        - instances packed as metainfo (as PackTrackInputs does)
+        - ori_video_length > video_length (image-by-image processing)
+        - Multiple frames from different videos
+
+        If this test produces correct AP, the evaluation pipeline is fine
+        and all-zero AP in training is caused by the model itself.
+        """
+        bdd100k_classes = ('pedestrian', 'rider', 'car', 'truck',
+                           'bus', 'train', 'motorcycle', 'bicycle')
+
+        coco_metric = CocoVideoMetric(
+            ann_file=None,
+            metric=['bbox'],
+            classwise=True)
+        coco_metric.dataset_meta = dict(classes=bdd100k_classes)
+
+        # Frame 1: pedestrian + car (labels 0, 2)
+        instances_1 = [
+            {'bbox_label': 0, 'bbox': [100, 200, 140, 400],
+             'ignore_flag': 0},
+            {'bbox_label': 2, 'bbox': [400, 200, 520, 280],
+             'ignore_flag': 0},
+        ]
+        pred_1 = InstanceData(
+            bboxes=torch.tensor([[100, 200, 140, 400],
+                                 [400, 200, 520, 280]],
+                                dtype=torch.float32),
+            labels=torch.tensor([0, 2]),
+            scores=torch.tensor([0.95, 0.90]))
+        frame_1 = DetDataSample()
+        frame_1.pred_instances = pred_1
+        # Pack instances as metainfo (as PackTrackInputs does)
+        frame_1.set_metainfo(dict(
+            img_id=1,
+            ori_shape=(720, 1280),
+            ori_video_length=200,  # full video length
+            instances=instances_1))
+        track_1 = TrackDataSample()
+        track_1.video_data_samples = [frame_1]
+
+        # Frame 2: car + bus (labels 2, 4)
+        instances_2 = [
+            {'bbox_label': 2, 'bbox': [300, 150, 450, 250],
+             'ignore_flag': 0},
+            {'bbox_label': 4, 'bbox': [600, 300, 900, 500],
+             'ignore_flag': 0},
+        ]
+        pred_2 = InstanceData(
+            bboxes=torch.tensor([[300, 150, 450, 250],
+                                 [600, 300, 900, 500]],
+                                dtype=torch.float32),
+            labels=torch.tensor([2, 4]),
+            scores=torch.tensor([0.88, 0.92]))
+        frame_2 = DetDataSample()
+        frame_2.pred_instances = pred_2
+        frame_2.set_metainfo(dict(
+            img_id=2,
+            ori_shape=(720, 1280),
+            ori_video_length=200,
+            instances=instances_2))
+        track_2 = TrackDataSample()
+        track_2.video_data_samples = [frame_2]
+
+        # Process both frames (image-by-image, as in validation)
+        predictions = [track_1.to_dict(), track_2.to_dict()]
+        for pred in predictions:
+            coco_metric.process(
+                dict(inputs=None, data_samples=None), [pred])
+
+        eval_results = coco_metric.evaluate()
+
+        # With perfect predictions, classes with GT should have AP=1.0
+        # pedestrian (class 0): 1 GT instance
+        assert eval_results['coco/pedestrian_precision'] == 1.0, \
+            f"pedestrian AP should be 1.0, got {eval_results}"
+        # car (class 2): 2 GT instances across 2 frames
+        assert eval_results['coco/car_precision'] == 1.0, \
+            f"car AP should be 1.0, got {eval_results}"
+        # bus (class 4): 1 GT instance
+        assert eval_results['coco/bus_precision'] == 1.0, \
+            f"bus AP should be 1.0, got {eval_results}"
+        # Overall mAP should be > 0 (only 3 of 8 classes have GT)
+        assert eval_results['coco/bbox_mAP'] > 0, \
+            f"mAP should be > 0, got {eval_results}"
