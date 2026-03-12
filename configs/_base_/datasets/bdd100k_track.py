@@ -88,5 +88,7 @@ test_dataloader = val_dataloader
 
 # evaluator
 val_evaluator = dict(
-    type='MOTChallengeMetric', metric=['HOTA', 'CLEAR', 'Identity'])
+    type='MOTChallengeMetric',
+    metric=['HOTA', 'CLEAR', 'Identity'],
+    seq_path_component=-2)
 test_evaluator = val_evaluator

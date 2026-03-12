@@ -64,6 +64,11 @@ class MOTChallengeMetric(BaseVideoMetric):
                     smoothed interpolation) method. Defaults to False.
                 - smooth_tau (int, optional): smoothing parameter in GSI.
                     Defaults to 10.
+        seq_path_component (int): Index used to extract the sequence name
+            from the image path via ``path.split(os.sep)[index]``.
+            For MOT Challenge (``…/MOT17-02/img1/000001.jpg``) use ``-3``
+            (default). For BDD100K (``…/<video_id>/<frame>.jpg``) use ``-2``.
+            Defaults to -3.
         collect_device (str): Device name used for collecting results from
             different ranks during distributed training. Must be 'cpu' or
             'gpu'. Defaults to 'cpu'.
@@ -86,6 +91,7 @@ class MOTChallengeMetric(BaseVideoMetric):
                  format_only: bool = False,
                  use_postprocess: bool = False,
                  postprocess_tracklet_cfg: Optional[List[dict]] = [],
+                 seq_path_component: int = -3,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(collect_device=collect_device, prefix=prefix)
@@ -118,6 +124,7 @@ class MOTChallengeMetric(BaseVideoMetric):
         ]
         assert benchmark in self.allowed_benchmarks
         self.benchmark = benchmark
+        self.seq_path_component = seq_path_component
         self.track_iou_thr = track_iou_thr
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp_dir.name = get_tmpdir()
@@ -157,7 +164,7 @@ class MOTChallengeMetric(BaseVideoMetric):
 
     def transform_gt_and_pred(self, img_data_sample, video, frame_id):
 
-        video = img_data_sample['img_path'].split(os.sep)[-3]
+        video = img_data_sample['img_path'].split(os.sep)[self.seq_path_component]
         # load gts
         if 'instances' in img_data_sample:
             gt_instances = img_data_sample['instances']
@@ -201,7 +208,7 @@ class MOTChallengeMetric(BaseVideoMetric):
     def process_image(self, data_samples, video_len):
 
         img_data_sample = data_samples[0].to_dict()
-        video = img_data_sample['img_path'].split(os.sep)[-3]
+        video = img_data_sample['img_path'].split(os.sep)[self.seq_path_component]
         frame_id = img_data_sample['frame_id']
         if self.seq_info[video]['seq_length'] == -1:
             self.seq_info[video]['seq_length'] = video_len
@@ -225,7 +232,7 @@ class MOTChallengeMetric(BaseVideoMetric):
         for frame_id in range(video_len):
             img_data_sample = data_samples[frame_id].to_dict()
             # load basic info
-            video = img_data_sample['img_path'].split(os.sep)[-3]
+            video = img_data_sample['img_path'].split(os.sep)[self.seq_path_component]
             if self.seq_info[video]['seq_length'] == -1:
                 self.seq_info[video]['seq_length'] = video_len
             self.transform_gt_and_pred(img_data_sample, video, frame_id)
