@@ -20,7 +20,8 @@ model = dict(
 # evaluator
 val_evaluator = [
     dict(type='CocoVideoMetric', metric=['bbox'], classwise=True),
-    dict(type='MOTChallengeMetric', metric=['HOTA', 'CLEAR', 'Identity'])
+    dict(type='MOTChallengeMetric', metric=['HOTA', 'CLEAR', 'Identity'],
+         seq_path_component=-2)
 ]
 
 test_evaluator = val_evaluator

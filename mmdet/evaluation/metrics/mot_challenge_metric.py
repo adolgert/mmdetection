@@ -9,6 +9,13 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 
+# trackeval uses np.float/np.int which were removed in numpy 1.24+.
+# Restore them as aliases so trackeval can load with modern numpy.
+if not hasattr(np, 'float'):
+    np.float = np.float64  # type: ignore[attr-defined]
+if not hasattr(np, 'int'):
+    np.int = np.int_  # type: ignore[attr-defined]
+
 try:
     import trackeval
 except ImportError:
